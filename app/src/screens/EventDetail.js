@@ -27,6 +27,7 @@ import {
     Text,
     TouchableOpacity,
     View,
+    Share
 } from 'react-native';
 import FeedbackModal from '../components/FeedbackModal';
 import AppealModal from '../components/AppealModal';
@@ -182,22 +183,25 @@ export default function EventDetail({ route, navigation }) {
             },
         );
 
-        getDoc(doc(db, `events/${eventId}/feedback`, user.uid)).then(snap => {
-            if (snap.exists()) setHasGivenFeedback(true);
-        });
-
+        if (user) {
+            getDoc(doc(db, `events/${eventId}/feedback`, user.uid)).then(snap => {
+                if (snap.exists()) setHasGivenFeedback(true);
+            });
+        }
         // Check if reminder exists
-        getDocs(
-            query(
-                collection(db, 'reminders'),
-                where('userId', '==', user.uid),
-                where('eventId', '==', eventId),
-            ),
-        ).then(snap => {
-            if (!snap.empty) {
-                setReminderId(snap.docs[0].id);
-            }
-        });
+        if (user) {
+            getDocs(
+                query(
+                    collection(db, 'reminders'),
+                    where('userId', '==', user.uid),
+                    where('eventId', '==', eventId),
+                ),
+            ).then(snap => {
+                if (!snap.empty) {
+                    setReminderId(snap.docs[0].id);
+                }
+            });
+        }
 
         // Check if event is bookmarked
         if (user) {
@@ -431,6 +435,30 @@ export default function EventDetail({ route, navigation }) {
 
     const openLink = url => {
         if (url) Linking.openURL(url).catch(() => Alert.alert('Error', 'Invalid Link'));
+    };
+
+    const handleExportReviews = async () => {
+        try {
+            const feedbackRef = collection(db, `events/${eventId}/feedback`);
+            const snapshot = await getDocs(feedbackRef);
+
+            if (snapshot.empty) {
+                Alert.alert('No Reviews', 'This event has no feedback yet.');
+                return;
+            }
+
+            let csv = 'User Name,Event Rating,Organizer Rating,Feedback,Date\n';
+            snapshot.forEach(doc => {
+                const d = doc.data();
+                const line = `\"${d.userName || 'Anonymous'}\",\"${d.eventRating || '-'}\",\"${d.clubRating || '-'}\",\"${(d.feedback || '').replace(/\"/g, '""')}\",${d.createdAt}\n`;
+                csv += line;
+            });
+
+            await Share.share({ message: csv, title: `Reviews - ${event.title}` });
+        } catch (error) {
+            console.error('Export Error: ', error);
+            Alert.alert('Error', 'Failed to export reviews.');
+        }
     };
 
     const sendCertificates = async () => {
@@ -746,7 +774,20 @@ export default function EventDetail({ route, navigation }) {
                 if (await Sharing.isAvailableAsync()) {
                     await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
                 } else {
-                    Alert.alert('Success', 'Certificate generated!');
+                    Alert.alert(
+                        "Success",
+                        "Certificate generated successfully!",
+                        [
+                            {
+                                text: "Add to LinkedIn",
+                                onPress: handleLinkedInShare
+                            },
+                            {
+                                text: "OK",
+                                style: "cancel"
+                            }
+                        ]
+                    );
                 }
             }
         } catch (e) {
@@ -754,6 +795,28 @@ export default function EventDetail({ route, navigation }) {
             Alert.alert('Error', 'Failed to generate certificate: ' + e.message);
         } finally {
             setSendingCertificates(false); // Reset loading state
+        }
+    };
+    const handleLinkedInShare = async () => {
+        try {
+            const linkedinUrl = `https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME`;
+
+            const certificateName = encodeURIComponent(event.title);
+            const organizationName = encodeURIComponent("UniEvent");
+            const issueYear = new Date(event.startAt).getFullYear();
+            const issueMonth = new Date(event.startAt).getMonth() + 1;
+
+            const finalUrl =
+                `${linkedinUrl}` +
+                `&name=${certificateName}` +
+                `&organizationName=${organizationName}` +
+                `&issueYear=${issueYear}` +
+                `&issueMonth=${issueMonth}`;
+
+            await Linking.openURL(finalUrl);
+        } catch (error) {
+            console.log(error);
+            Alert.alert("Error", "Failed to open LinkedIn");
         }
     };
 
@@ -1724,10 +1787,10 @@ export default function EventDetail({ route, navigation }) {
                                         onPress={
                                             event.certificatesSent
                                                 ? () =>
-                                                      Alert.alert(
-                                                          'Sent',
-                                                          'Certificates have already been sent.',
-                                                      )
+                                                    Alert.alert(
+                                                        'Sent',
+                                                        'Certificates have already been sent.',
+                                                    )
                                                 : handleSendCertificates
                                         }
                                         disabled={sendingCertificates}
@@ -1769,8 +1832,8 @@ export default function EventDetail({ route, navigation }) {
                                             {sendingCertificates
                                                 ? 'Sending...'
                                                 : event.certificatesSent
-                                                  ? 'Certificates Sent'
-                                                  : 'Send Certificates'}
+                                                    ? 'Certificates Sent'
+                                                    : 'Send Certificates'}
                                         </Text>
                                     </TouchableOpacity>
                                 )}
@@ -1839,10 +1902,10 @@ export default function EventDetail({ route, navigation }) {
                             styles.primaryBtn,
                             rsvpStatus === 'going' && styles.secondaryBtn,
                             new Date(event.endAt) < new Date() &&
-                                !(rsvpStatus === 'going' && event.certificatesSent) && {
-                                    backgroundColor: theme.colors.textSecondary,
-                                    borderColor: theme.colors.textSecondary,
-                                },
+                            !(rsvpStatus === 'going' && event.certificatesSent) && {
+                                backgroundColor: theme.colors.textSecondary,
+                                borderColor: theme.colors.textSecondary,
+                            },
                         ]}
                         onPress={
                             new Date(event.endAt) < new Date()
@@ -1861,9 +1924,9 @@ export default function EventDetail({ route, navigation }) {
                                 styles.primaryBtnText,
                                 rsvpStatus === 'going' && styles.secondaryBtnText,
                                 new Date(event.endAt) < new Date() &&
-                                    !(rsvpStatus === 'going' && event.certificatesSent) && {
-                                        color: '#fff',
-                                    },
+                                !(rsvpStatus === 'going' && event.certificatesSent) && {
+                                    color: '#fff',
+                                },
                             ]}
                         >
                             {new Date(event.endAt) < new Date()
@@ -1875,7 +1938,7 @@ export default function EventDetail({ route, navigation }) {
                                 : rsvpStatus === 'going'
                                   ? 'Registered ✓'
                                   : event.isPaid
-                                    ? `Book Ticket (${ebInfo.isEligible ? '\u20B9' + ebInfo.currentPrice + ' Early Bird' : '\u20B9' + (event.price ?? 0)})`
+                                    ? `Book Ticket (₹${event.price})`
                                     : 'RSVP Now'}
                         </Text>
                     </TouchableOpacity>
